@@ -1,0 +1,32 @@
+{
+    "id": "517EC563",
+    "path": "~/Documents/GitHub/illusion/doc/doc.qmd",
+    "project_path": "doc/doc.qmd",
+    "type": "quarto_markdown",
+    "hash": "906708664",
+    "contents": "",
+    "dirty": false,
+    "created": 1733352266252.0,
+    "source_on_save": false,
+    "relative_order": 4,
+    "properties": {
+        "rmdVisualMode": "true",
+        "rmdVisualWrapConfigured": "true",
+        "chunk_output_type": "console",
+        "source_window_id": "",
+        "Source": "Source",
+        "docOutlineVisible": "1",
+        "rmdVisualCollapsedChunks": "",
+        "rmdVisualModeLocation": "7087:4266.6669921875",
+        "cursorPosition": "240,0",
+        "scrollLine": "0"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1733353355,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1733353355634,
+    "read_only": false,
+    "read_only_alternatives": []
+}
