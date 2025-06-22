@@ -1,0 +1,712 @@
+---
+title: "Pre-registration of 'Between-Study Variation in Meta-Analyses of Mechanical Thrombectomy: A Systematic Review and Case Study of Statistical Reporting Practices in Clinical Medicine'"
+author: "Bradley Kolb"
+format: pdf
+editor: visual
+execute: 
+  echo: true
+  warning: false
+---
+
+```{r}
+library(tidyverse)
+```
+
+## Rationale
+
+Between-study variation is essential for interpreting the average treatment effect reported in a meta-analysis, as it quantifies how sensitive the treatment effect is to the clinical context. When variation is high -- due to differences in patient populations, protocols, facility expertise, or other factors -- treatment effects in specific settings may differ substantially from meta-analytic averages, regardless of the average effect size or its statistical significance.
+
+```{r}
+#| echo: false
+#| fig-width: 3
+#| fig-height: 2
+#| fig-cap: "The illusion of certainty in meta-analysis: a significant average effect (left) does not imply a positive trial-specific effect (right)."
+
+set.seed(123)
+
+# meta-analysis hyperparameters estimates
+mu <- rnorm(1e4, mean = 0.7, sd = 0.7/3) 
+tau <- abs(rnorm(1e4, mean = 0.7, sd = 0.7/3)) 
+
+# implied study-specific effect size estimate
+theta <- rnorm(1e4, mean = mu, sd = tau)
+
+mu_mean <- mean(mu)
+mu_ci <- quantile(mu, c(0.025, 0.975))
+
+theta_mean <- mean(theta)
+theta_ci <- quantile(theta, c(0.025, 0.975))
+
+mu_df <- tibble(
+  mean = mean(mu),
+  lower = quantile(mu, 0.025),
+  upper = quantile(mu, 0.975),
+  variable = "average effect"
+)
+
+theta_df <- tibble(
+  mean = mean(theta),
+  lower = quantile(theta, 0.025),
+  upper = quantile(theta, 0.975),
+  variable = "study-specific effect"
+)
+
+df <- rbind(mu_df, theta_df)
+
+ggplot(df) +
+  geom_point(aes(x = variable, y = mean)) + 
+  geom_errorbar(aes(x = variable, ymin = lower, ymax = upper), width = 0) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_blank(),
+        panel.border = element_rect(color = "black", fill = NA)) + 
+ labs(x = "", 
+      y = "Effect Size")
+```
+In an effort to better understand how well the current medical literature communicates between-study variation in randomized trials, we propose to systematically review reporting practices for between-study variation in meta-analyses of mechanical thrombectomy for acute ischemic stroke. This literature offers an ideal case study for multiple reasons:
+
+-   implementation characteristics
+
+    -   well-defined intervention
+
+    -   measurable uniform outcomes
+
+    -   identifiable effect modifiers
+
+-   evidence-base
+
+    -   multiple high-quality RCTs
+    -   enables robust estimation of meta-analytic parameters
+
+-   clinical impact
+
+    -   published meta-analyses directly influence clinician behavior and clinical guidelines
+
+-   publication characteristics
+
+    -   multiple meta-analyses
+
+    -   diverse journal types
+
+    -   diverse author perspectives
+
+By analyzing how these meta-analyses handle between-study variation, we aim to assess current reporting practices and develop recommendations that better support evidence-based decision-making.
+
+## Background
+
+Formally, a random-effects meta-analysis is a multilevel model with the following structure.
+
+$$
+\begin{aligned}
+y_j &\sim \text{N}(\theta_j, \sigma_j) \\
+\theta_j &\sim \text{N}(\mu, \tau) 
+\end{aligned}
+$$
+
+From a generative perspective, this model says that the true underlying treatment effect $\theta_j$ for a trial $j$ is a function of the average treatment effect $\mu$ and the between-trial variation $\tau$, and that the effect we actually observe in $j$ is a random deviation from $\theta_j$ governed by $\sigma_j$, the standard error of $y$ in $j$.
+
+From a statistical perspective, what this model says is that we can combine the observed information
+
+$$
+(y_1, \sigma_1) ... (y_n, \sigma_n)
+$$
+
+in $n$ clinical trials to estimate both the true underlying treatment effects for each trial
+
+$$
+\theta_1 ... \theta_n
+$$
+
+as well as the average treatment effect across the population of all trials $\mu$ and the between-trial variation across the population $\tau$.
+
+Although $\mu$ has a more intuitive interpretation ("the average treatment effect", "the summary effect"), $\tau$ is arguably the more important parameter in the random-effects model, because variation in treatment effects across trials reveals how context-dependent the intervention is. While $\mu$ estimates the average effect (the most likely outcome in any single context), $\tau$ quantifies the range of plausible effects (what effects could plausibly be observed in any single context). Together, these parameters tell us not just how effective a treatment is on average, but how reliably that effectiveness translates across settings. Importantly, a precise estimate for $\mu$ ("significantly" greater than zero, say) *does not* imply that the effect in any one trial will be greater than zero. To know what the range of plausible outcomes is in any given trial, you need to know $\tau$.
+
+Estimating $\tau$ faces two key challenges:
+
+1.  Statistical complexity
+
+    -   in situations where the number of studies in a meta-analysis are low (between 3 and 5, for instance), estimating $\tau$ is challenging
+    -   standard algorithms, such as the DerSimonian-Laird "method of moments" approach or basic optimization algorithms such as unconstrainted maximum likelihood estimation, will often default to a boundary solution of $\tau = 0$ in these sparse data scenarios
+    -   this reflects the weakness of the algorithms in sparse data situations, not true evidence of "no heterogeneity"
+    -   however, it or its implications (such as $I^2=0$), is often uncritically reported
+    -   defaulting for a boundary solution for $\tau$ also leads to systematic underestimation of uncertainty in $\mu$, the average or "summary" treatment effect
+    -   this is highly problematic in small meta-analyses, because the limited evidence already warrants caution
+    -   interpreting $\tau = 0$ as a real estimate instead of a red flag demonstrating failure of the statistical model reflects a problematic underlying trend
+
+2.  Communication barriers
+
+    -   $\tau$ lacks the (seemingly) intuitive interpretation of $\mu$ ("average effect" or "summary treatment effect")
+    -   many analyses bypass reporting $\tau$ entirely, in favor of the $I^2$ statistic
+    -   but this statistic is highly prone to misinterpretation, and since it is directly derived from $\tau$, even if its meaning is not misinterpreted, unrecognized problems with $\tau$ estimation will manifest in $I^2$ as well
+
+These challenges likely affect reporting quality, but their impact hasn't been systematically evaluated in a robust clinical literature. This study seeks to close this gap by examining how meta-analyses of mechanical thrombectomy trials report between-study variation.
+
+By analyzing how between-study variation is currently reported, we aim to:
+
+-   Assess whether clinicians receive adequate information about treatment effect variability
+
+-   Identify specific practices that impede proper interpretation of between-study variation in meta-analyses
+
+-   Develop recommendations for improved reporting standards that better support evidence-based decision-making, which critically requires an understanding of between-study variation
+
+## Inclusion criteria
+
+1.  Population and intervention
+
+    -   Articles that perform a meta-analysis on the efficacy or safety of mechanical thrombectomy for acute ischemic stroke.
+
+2.  Publication sources and time frame
+
+    -   Journals: JAMA, The Lancet, JAMA Neurology, Neurology, Stroke, Journal of Neurointerventional Surgery, American Journal of Neuroradiology, and Neurosurgery
+
+    -   Publication dates: January 1, 2014 to January 1, 2024
+
+3.  Study design
+
+    -   Must self-identify as meta-analysis in the title
+
+    -   Must apply a random effects model
+
+4.  Outcome measures
+
+    -   Primary or secondary outcomes relevant to mechanical thrombectomy efficacy or safety
+
+5.  Exclusion criteria
+
+    -   Meta-analyses not using a random-effects model
+
+    -   Narrative reviews, systematic reviews without quantitative meta-analysis, or single-study analyses
+
+## Search strategy
+
+1.  Databases
+
+    -   Pubmed
+    -   Hand search to augment and check results
+
+2.  Search term
+
+    -   ((((((((((("Lancet (London, England)"\[Journal\]) OR ("The Lancet. Neurology"\[Journal\])) OR ("JAMA"\[Journal\])) OR ("jama neurology"\[Journal\])) OR ("Neurology"\[Journal\])) OR ("Stroke"\[Journal\])) OR ("AJNR. American journal of neuroradiology"\[Journal\])) OR ("Journal of neurointerventional surgery"\[Journal\])) OR ("Neurosurgery"\[Journal\])) AND (meta-analysis\[Title\])) AND (thrombectomy\[Title\])) AND (("2014"\[Date - Publication\] : "2024"\[Date - Publication\]))seq
+
+3.  Time filter
+
+    -   2014/01/01 to 2024/12/31.
+
+4.  Screening process
+
+    -   Titles and abstracts will be screened by one reviewer to identify potential meta-analyses of mechanical thrombectomy.
+    -   Full texts of eligible citations will be retrieved, and full-text eligibility screening will confirm that a random-effects model was used.
+
+5.  Documentation
+
+    -   The number of articles identified, screened, included, and excluded will be reported in a PRISMA flow diagram.
+
+## Data extraction
+
+A standardized data extraction form will be developed. We will pilot the form on 5 randomly selected articles and then iteratively refine it.
+
+*General study information*
+
+-   pmid, article title, first author, journal, year
+
+*Meta-analysis characteristics*
+
+-   whether the statistical software package used to perform the analysis was reported (if open source software such as R or python was used, must specify packages used, if closed-source software such as RevMan, SPSS, etc, then specifying that fact is sufficient)
+-   if so, what package was used
+-   Whether code was shared
+-   Whether enough information was reported to repeat the analysis
+-   Whether any model checking was performed (for instance, how sensitive were conclusions to model specification choices? to choice of random effects model over fixed effects model? etc)
+-   Whether a statistician was one of the authors or was consulted
+
+*Problematic practices in reporting between-trial heterogeneity*
+
+1.  Complete omission
+
+    -   no reporting of heterogeneity statistics in body of article
+    -   fails to address fundamental aim of random-effects meta-analysis
+
+2.  Inadequate reporting of $\tau$
+
+    -   the fundamental measure of between-trial heterogeneity
+    -   in a pilot review of 5 randomly selected studies, $\tau$ was not reported in the body of any of the studies
+
+3.  Misuse of $I^2$
+
+    -   Incorrect definition: $I^2$ represents the proportion of total variance due to between-trial heterogeneity. It is often reported incorrectly as a measure of heterogeneity itself
+    -   Even if $I^2$ is defined correctly, its interpretation is scale-dependent, insofar as it depends on the underlying value for $\tau$
+    -   In our pilot review, $I^2$ was not defined or incorrectly defined in all 5 studies, was never interpreted with respect to the underlying $\tau$ estimate, and was often reported as exact zero without qualification
+    -   but reporting $I^2=0$ without qualification is problematic, because it reflects statistical limitations rather than true empircal homogeneity
+    -   Other problematic misuses of $I^2$ observed in our pilot studies included applying arbitrary thresholds to $I^2$ values and inappropriately treating $I^2$ as a test statistic
+
+4.  Misuse of $Q$ and $\chi^2$
+
+    -   in general, applying null hypothesis testing to the question of between-trial variation is discouraged
+    -   however, even when choosing to employ this potentially problematic practice, interpreting non-significant $p$ values as evidence of homogeneity is a statistical fallacy
+    -   nonetheless, in our pilot study, this practice was observed multiple times
+
+5.  Poor integration with clinical context
+
+    -   reporting measures without discussing implications
+    -   not making connection to interpretation of $\mu$ (external validity)
+    -   not using prediction intervals
+
+## Planned analyses
+
+1.  Descriptive statistics
+
+2.  Interpretation
+
+    -   narrative interpretation of results
+    -   implication of results for utility of published meta-analyses
+    -   recommendations for improved reporting standards
+    -   discussion of specific problematic practices
+
+3.  Re-analysis
+
+    -   For each paper, identify the main analysis, and if it reports enough data, replicate the meta-analysis using Stan and two methods
+
+        -   full posterior distributions using MCMC and regularizing priors (bayesian)
+        -   penalized maximum likelihood point-estimates using optimization (frequentist)
+
+    -   compare these results to reported parameter estimates
+
+    -   hypothesis: the re-analyzed estimates for $\tau$ and $I^2$ will be different than many of the reported point-estimates in the literature (because these estimates use the RevMan "DerSimonian and Laird random-effects model" to obtain the estimates, which defaults to $\tau=0$ when Cochrane's $Q$ is less than or equal to its degrees of freedom$k-1$.
+
+    -   implication: many meta-analyses would be misrepresenting the degree of between-trial heterogeneity in the literature
+
+## Technical details
+
+### Simulating clinical trial data sets in `R`
+
+The following function does simulates a single data-set of randomized trials assuming a true underlying value for $\mu$ and a true underlying value for $\tau$.
+
+```{r function to simulate meta-analysis dataset}
+sim_one_dataset <- function(seed, 
+                           n_trials = 10,
+                           true_mu = 0.7, 
+                           true_tau = 0.7,
+                           n_range = c(200, 200)) {
+  
+  set.seed(seed)
+  require(dplyr)
+  
+  # Generate varying sample sizes
+  n_per_trial <- round(runif(n_trials, n_range[1], n_range[2]))
+  
+  # Generate true effects for each trial
+  true_effects <- rnorm(n_trials, true_mu, true_tau)
+  
+  # Generate observed outcomes for each trial
+  a <- rbinom(n_trials, n_per_trial, plogis(true_effects))
+  b <- n_per_trial - a
+  c <- rbinom(n_trials, n_per_trial, plogis(0))
+  d <- n_per_trial - c
+  
+  simulated_data <- tibble(
+    study = 1:n_trials,
+    sample_size = n_per_trial,
+    true_effects = true_effects,
+    observed_effects = log((a*d)/(b*c)),
+    standard_errors = sqrt((1/a) + (1/b) + (1/c) + (1/d))
+  )
+  
+  return(simulated_data)
+}
+```
+
+The following function uses `sim_one_dataset` to simulate multiple data sets of multiple different sizes.
+
+```{r function to simulate groups of simulations}
+sim_many_datasets <- function(n_sims, n_trials_values, true_mu, true_tau, n_range) {
+  lapply(n_trials_values, function(n_trials) {
+    dataset <- lapply(1:n_sims, function(seed) sim_one_dataset(
+      seed = seed, 
+      n_trials = n_trials,
+      true_mu = true_mu,
+      true_tau = true_tau,
+      n_range = n_range
+    ))
+    list(n_trials = n_trials, simulated_datasets = dataset)
+  })
+}
+```
+
+For example, we can use `sim_many_datasets` to produce $100$ sets of $3$ simulated trials, $100$ sets of $5$ simulated trials, and $100$ sets of $20$ simulated trials, all generated from the same underlying values for $\mu$ and $\tau$.
+
+```{r use simulation functions to generate many data sets}
+#| eval: false
+n_trials_values <- c(3, 5, 20)
+n_sims <- 100
+true_mu <- 0.7
+true_tau <- 0.7
+n_range <- c(50, 200)
+
+simulated_datasets <- sim_many_datasets(
+  n_sims = n_sims,
+  n_trials_values = n_trials_values,
+  true_mu = true_mu,
+  true_tau = true_tau,
+  n_range = n_range
+)
+```
+
+With these data sets in hand, we than apply various estimation methods to see which are best able to recover the underlying true parameter values, and to assess how these techniques perform when the number of simulated trials varies.
+
+### Implementing standard random effects meta-analysis in R
+
+The Dersimonian-Laird estimator for the random effects meta-analysis model is implemented as follows.
+```{r function to implement dersimonian-laird estimator}
+dersimonian_laird <- function(meta_data) {
+  
+  y <- meta_data$observed_effects # observed effects
+  v <- (meta_data$standard_errors)^2 # observed variances
+  k <- nrow(meta_data)              
+  
+  weights_fixed <- 1/v
+  
+  fixed_effect_summary <- sum(weights_fixed * y) / sum(weights_fixed)
+  
+  Q_statistic <- sum(weights_fixed * (y - fixed_effect_summary)^2)
+  
+  # degrees of freedom
+  df <- k - 1
+  
+  tau_squared <- max((Q_statistic - df) / 
+                     (sum(weights_fixed) - sum(weights_fixed^2) / sum(weights_fixed)), 0)
+  
+  weights_random <- 1 / (v + tau_squared)
+  
+  random_effect_summary <- sum(weights_random * y) / sum(weights_random)
+  
+  random_effect_se <- sqrt(1 / sum(weights_random))
+  
+  i_squared <- max(100*(Q_statistic - (df))/Q_statistic, 0)
+  
+  return(list(
+    tau = sqrt(tau_squared),
+    mu = random_effect_summary,
+    se = random_effect_se,
+    i2 = i_squared
+  ))
+}
+```
+
+We can generate one set of simulated trials and use the DL method to estimate $\mu$, $\tau$, and $I^2$.
+```{r simulate meta-analysis data and apply dersirmonian laird}
+seed <- 123
+mu <- 0.7
+tau <- 0.7
+n <- 10
+
+one_dataset <- sim_one_dataset(seed = seed, n_trials = n, true_mu = mu, true_tau = tau)
+
+dl_results <- dersimonian_laird(one_dataset)
+
+# Print results
+cat("True values:\n")
+cat("tau:", tau, "\n")
+cat("mu:", mu, "\n")
+cat("average within-study standard error:", sum(one_dataset$standard_errors)/n, "\n")
+
+cat("\nResults from DerSimonian-Laird Method:\n")
+cat("Estimated tau (heterogeneity):", dl_results$tau, "\n")
+cat("Random-effects summary effect size:", dl_results$mu, "\n")
+cat("Standard error of summary effect size:", dl_results$se, "\n")
+cat("I^2:", dl_results$i2)
+```
+
+When the number of studies in a meta-analysis is high, this approach performs relatively well. When the number of studies is low, it performs less well. We can show this graphically and numerically as follows.
+
+First, we will write a generic function that applies an estimator to a data-set.
+```{r}
+fit_meta_analytic_estimator <- function(simulated_datasets, estimator_function) {
+  all_results <- lapply(simulated_datasets, function(dataset) {
+    n_trials <- dataset$n_trials
+    simulated_data <- dataset$simulated_data
+    
+    results <- lapply(simulated_data, function(x) estimator_function(meta_data = x))
+    
+    results_df <- bind_rows(lapply(results, as.data.frame), .id = "simulation")
+    results_df$n_trials <- n_trials
+    return(results_df)
+  })
+  
+  bind_rows(all_results)
+}
+```
+
+Next, we will wrap this function so it can be re-used.
+```{r}
+dersimonian_laird_wrapper <- function(meta_data) {
+  dersimonian_laird(meta_data = meta_data)
+}
+```
+
+Next, we will simulate a data set.
+```{r}
+n_trials_values <- c(3, 5, 20)
+n_sims <- 100
+true_mu <- 0.7
+true_tau <- 0.7
+n_range <- c(50, 200)
+
+simulated_datasets <- sim_many_datasets(
+  n_sims = n_sims,
+  n_trials_values = n_trials_values,
+  true_mu = true_mu,
+  true_tau = true_tau,
+  n_range = n_range
+)
+```
+
+Finally, we will apply the estimator function to the simulated data set.
+```{r}
+results_combined <- fit_meta_analytic_estimator(
+  simulated_datasets = simulated_datasets,
+  estimator_function = dersimonian_laird_wrapper
+)
+```
+
+Then, we can graph the results.
+```{r}
+#| fig-cap: "The accuracy of the DerSimonian-Laird method depends heavily on the number of studies in a meta-analysis."
+ggplot(results_combined, aes(x = mu, y = tau)) +
+  geom_point(size = 2, color = "grey") +
+  labs(
+    title = "Scatter Plot of Estimated Values for mu and tau using DL method",
+    x = "Estimated Mu",
+    y = "Estimated Tau"
+  ) +
+  geom_hline(yintercept = true_mu, color = "grey", linetype = "dashed") +
+  geom_vline(xintercept = true_tau, color = "grey", linetype = "dashed") +
+  coord_cartesian(xlim = c(-1, 2), ylim = c(0, 2)) + 
+  theme_classic(base_size = 12) +
+  theme(
+    axis.text = element_text(size = 10)
+  ) +
+  facet_wrap(~ n_trials, labeller = label_both)
+```
+As the number of studies increases from $3$ to $5$ to $20$, the estimates for $\mu$ and $\tau$ concentrate more closely around the true underlying values of $0.7$ for each. In other words, the accuracy of the DL method improves greately with increased study number. We can show this numerically by calculating the root mean squared error (RMSE) for each of the 3 sets of simulated data.
+```{r}
+rmse_results <- results_combined %>%
+  group_by(n_trials) %>%
+  summarize(
+    rmse_mu = sqrt(mean((mu - true_mu)^2)),
+    rmse_tau = sqrt(mean((tau - true_tau)^2))
+  )
+
+print(rmse_results)
+```
+
+We can also graph these results.
+```{r}
+ggplot(rmse_results, aes(x = n_trials, y = rmse_tau)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "RMSE of tau estimates vs. number of trials",
+    x = "trials",
+    y = "RMSE of tau"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(axis.text = element_text(size = 10))
+```
+
+### Estimating between-trial variation using maximum likelihood estimation
+
+We can implement the basic random-effects meta-analysis model in `Stan`.
+```{stan output.var = "mle"}
+data {
+  int<lower=1> studies;
+  array[studies] real observed_effects;
+  array[studies] real<lower=0> standard_errors;
+}
+transformed data {
+  vector[studies] v = square(to_vector(standard_errors)); 
+}
+parameters {
+  real mu;
+  real<lower=0> tau;
+  array[studies] real true_effects;
+}
+model {
+  observed_effects ~ normal(true_effects, standard_errors);
+  true_effects ~ normal(mu, tau); 
+}
+generated quantities {
+  real<lower=0> i2 = square(tau) / (square(tau) + sum(v)/studies); 
+  real new_true_effect = normal_rng(mu, tau); 
+}
+```
+
+We can obtain the maximum-likelihood estimates for the parameter values using `Stan`'s built-in optimizer.
+```{r}
+library(cmdstanr)
+
+dat <- list(
+  studies = n,
+  observed_effects = one_dataset$observed_effects,
+  standard_errors = one_dataset$standard_errors
+)
+
+model_mle <- cmdstan_model(here::here("mle.stan"))
+
+mle <- model_mle$optimize(
+  data = dat, 
+  seed = 1
+)
+
+mle$summary(variables = c("mu", "tau", "i2"))
+```
+
+```{r}
+mle <- function(meta_data) {
+  
+  dat <- list(
+    studies = nrow(meta_data),
+    observed_effects = meta_data$observed_effects,
+    standard_errors = meta_data$standard_errors
+  )
+  
+  fit <- model_mle$optimize(
+  data = dat, 
+  seed = 1)
+  
+  values <- fit$summary(variables = c("mu", "tau", "i2"))
+  
+  return(list(
+    mu = values$estimate[1],
+    tau = values$estimate[2],
+    i2 = values$estimate[3]
+  ))
+}
+```
+
+```{r}
+mle_wrapper <- function(meta_data) {
+  mle(meta_data = meta_data)
+}
+```
+
+```{r}
+results_mle <- fit_meta_analytic_estimator(
+  simulated_datasets = simulated_datasets,
+  estimator_function = mle_wrapper
+)
+```
+
+```{r}
+#| fig-cap: "The accuracy of the MLE method."
+ggplot(results_mle, aes(x = mu, y = tau)) +
+  geom_point(size = 2, color = "grey") +
+  labs(
+    title = "Scatter Plot of Estimated Values for mu and tau using MLE",
+    x = "Estimated Mu",
+    y = "Estimated Tau"
+  ) +
+  geom_hline(yintercept = true_mu, color = "grey", linetype = "dashed") +
+  geom_vline(xintercept = true_tau, color = "grey", linetype = "dashed") +
+  coord_cartesian(xlim = c(-1, 2), ylim = c(0, 2)) + 
+  theme_classic(base_size = 12) +
+  theme(
+    axis.text = element_text(size = 10)
+  ) +
+  facet_wrap(~ n_trials, labeller = label_both)
+```
+
+```{r}
+rmse_mle <- results_mle %>%
+  group_by(n_trials) %>%
+  summarize(
+    rmse_mu = sqrt(mean((mu - true_mu)^2)),
+    rmse_tau = sqrt(mean((tau - true_tau)^2))
+  )
+
+print(rmse_mle)
+```
+
+```{r}
+ggplot(rmse_mle, aes(x = n_trials, y = rmse_tau)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "RMSE of MLE tau estimates vs. number of trials",
+    x = "trials",
+    y = "RMSE of tau"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(axis.text = element_text(size = 10))
+```
+
+
+### Estimating between-trial variation using Bayesian inference
+
+We can implement a Bayesian version of random-effects meta-analysis in `Stan`.
+```{stan output.var = "bayes"}
+data {
+  int<lower=1> studies;
+  array[studies] real observed_effects;
+  array[studies] real<lower=0> standard_errors;
+}
+transformed data {
+  vector[studies] v = square(to_vector(standard_errors)); 
+}
+parameters {
+  real mu;
+  real<lower=0> tau;
+  vector<offset=mu,multiplier=tau>[studies] true_effects;
+}
+model {
+  observed_effects ~ normal(true_effects, standard_errors);
+  true_effects ~ normal(mu, tau); 
+  mu ~ std_normal();
+  tau ~ cauchy(0, 0.5);
+}
+generated quantities {
+  real<lower=0> i2 = square(tau) / (square(tau) + sum(v)/studies); 
+  real new_true_effect = normal_rng(mu, tau); 
+}
+```
+
+We can obtain the estimated posterior distribution for the model using MCMC sampling.
+```{r}
+model_bayes <- cmdstan_model(here::here("bayes.stan"))
+
+bayes <- model_bayes$sample(
+  data = dat, 
+  seed = 1, 
+  chains = 4, 
+  parallel_chains = 4, 
+  refresh = 0, 
+  adapt_delta = 0.99,
+  step_size = 1
+)
+
+bayes$summary(variables = c("mu", "tau", "i2"))
+```
+
+Compare to results of Bayesian model using `brms`.
+```{r brms}
+library(brms)
+
+brms_model <- brm(
+  observed_effects | se(standard_errors) ~ 1 + (1 | study),  
+  data = one_dataset,
+  family = gaussian(),             
+  prior = c(
+    prior(normal(0, 1), class = "Intercept"), 
+    prior(cauchy(0, 0.5), class = "sd")       
+  ),
+  iter = 2000,
+  chains = 4,
+  cores = 4,
+  backend = "cmdstanr"             
+)
+
+summary(brms_model)
+
+plot(brms_model)
+
+pp_check(brms_model)
+```

@@ -16,17 +16,91 @@ editor_options:
 ## Packages
 
 ```{r}
-library(dplyr)
+library(tidyverse)
 library(here)
 ```
+
+## Data generating process
+
+The data generating process is an important concept in statistical modelling, and focusing on the assumed data generating process in random effects meta-analysis is the best way of understanding what is going on. This is especially true for clinicians, who have extensive background in the physical and life sciences (which work by hypothesizing models to explain observed data), but limited background in mathematics and statistical theory.
+
+In a random effects meta-analysis of randomized trials of particular intervention, the total effect of an intervention in a specific trial is assumed to have two components. The first component is due to the intervention. The second component is due to everything other than the intervention that influences the outcome. The portion of the effect due to the intervention is assumed to be constant across all the trials. The portion of the effect due to everything else is assumed to be context dependent, varying across all the trials in a deterministic but multi-factorial way.
+
+```{r}
+unobserved_variables <- tibble(
+  treatment_effect = 0.7,
+  context_effect = sample(c(-0.3, 0.3, 0.7), 10, replace = TRUE),
+  true_effect = treatment_effect + context_effect
+)
+
+print(unobserved_variables)
+```
+
+The total effect and its components are "data" but they aren't observable. The observed data, which are events versus non-events in the control and intervention arms of each trial, is generated in this way.
+
+```{r}
+outcomes <- unobserved_variables %>% 
+  mutate(
+    baseline_odds = exp(0),
+    intervention_odds = baseline_odds + true_effect,
+    events_control = rbinom(10, 100, plogis(baseline_odds)),
+    nonevents_control = 100 - events_control,
+    events_intervention = rbinom(10, 100, plogis(intervention_odds)),
+    nonevents_intervention = 100 - events_intervention
+    ) %>%
+  select(events_control, nonevents_control, events_intervention, nonevents_intervention)
+
+print(outcomes)
+```
+
+The "estimated" effect sizes are calculated from the observed data.
+
+```{r}
+observed_variables <- outcomes %>% 
+  mutate(
+    y = log(events_intervention) - 
+      log(nonevents_intervention) - 
+      (log(events_control) - log(nonevents_control)),
+    se = sqrt(1/events_intervention + 1/(nonevents_intervention) 
+                      + 1/events_control + 1/(nonevents_control))
+  ) %>% 
+  select(y, se)
+
+print(observed_variables)
+```
+
+The data generating process as outlined above generates values for all of the following variables.
+
+```{r}
+variables <- bind_cols(
+  unobserved_variables, observed_variables
+)
+
+print(variables)
+```
+
+## The random effects model
+
+A random effects meta-analysis assumes the above data generating process and then asks how we can use the observed variables to estimate the unobserved variables.
+
+In order to do this, we assume the following statistical model.
+
+$$
+\begin{align*}
+\theta_j &= \mu + \mu_j \\
+y_j &= \theta_j + \epsilon_j
+\end{align*}
+$$
+
+Here, $\mu_j$ is a normally distributed error term with a mean of zero and a standard deviation equal to $\tau$, and $\epsilon_j$ is a normally distributed error term with a mean of zero and a standard deviation equal to the observed standard error of the data $\text{se_j}$. The error terms are independent.
+
+What this means in practice is that context-dependent portions of the true underlying treatment effects cancel each other out in large data sets (as j goes to infinity, the mean of the $\theta_j$'s converges to $\mu$). This also holds for the observed treatment effects.
 
 ## Stan model
 
 ```{stan output.var = "compiled_model"}
 #| eval: false
 
-// varying (random) effect meta-analysis
-// adapted from www.mc-stan.org/docs/stan-users-guide/measurement-error.html
 data {
   int<lower=0> J; // num studies
   array[J] int<lower=0> n_t; // num cases, treatment
@@ -92,157 +166,16 @@ generated quantities {
 
 ```
 
-## Set up simulation
-
-```{r functions.R}
-#| eval: false
-run_single_sim <- function(seed, 
-                           n_trials = 10,
-                           true_mu = 0.7, 
-                           true_tau = 0.7,
-                           n_range = c(200, 200)) {
-  
-  set.seed(seed)
-  
-  # Generate varying sample sizes
-  n_per_trial <- round(runif(n_trials, n_range[1], n_range[2]))
-  
-  # Generate true effects for each trial
-  true_effects <- rnorm(n_trials, true_mu, true_tau)
-  
-  # Generate trial data
-  data <- list(
-    J = n_trials,
-    n_t = n_per_trial,
-    r_t = rbinom(n_trials, n_per_trial, plogis(true_effects)),
-    n_c = n_per_trial, 
-    r_c = rbinom(n_trials, n_per_trial, plogis(0)),
-    estimate_posterior = 1,
-    priors = 1
-  )
-  
-  observed_effects <-  log(data$r_t) - log(data$n_t - data$r_t) - 
-    (log(data$r_c) - log(data$n_c - data$r_c))
-  
-  observed_se <- sqrt(1/data$r_t + 1/(data$n_t - data$r_t) 
-               + 1/data$r_c + 1/(data$n_c - data$r_c)
-           )
-  
-  observed_z <- abs(observed_effects/observed_se)
-  
-  # Fit model
-  fit <- compiled_model$sample(
-    data = data,
-    seed = seed,
-    chains = 4,
-    parallel_chains = 4,
-    refresh = 0,
-    init = 1,
-    adapt_delta = 0.99
-  )
-  
-  print(fit$diagnostic_summary())
-  print(fit$summary(variables = c("mu", "tau"), "rhat", "ess_bulk"))
-  
-  # Extract posterior samples
-  draws <- fit$draws()
-  summ <- fit$summary()
-  mu_samples <- as.vector(draws[,,"mu"])
-  theta_new_samples <- as.vector(draws[,,"theta_new"])
-  theta_100_samples <- fit$draws("theta_100", format = "matrix")
-  
-  # Calculate metrics
-  coverage_mu <- mean(true_mu > quantile(mu_samples, 0.025) & 
-                        true_mu < quantile(mu_samples, 0.975))
-  coverage_theta <- mean(true_effects > quantile(theta_new_samples, 0.025) & 
-                           true_effects < quantile(theta_new_samples, 0.975))
-  
-  # Return results
-  list(
-    observations = list(
-      observed_effects = observed_effects,
-      observed_se = observed_se,
-      observed_z = observed_z
-    ),
-    true_effects = true_effects,
-    diagnostics = list(
-      rhat = max(summ$rhat, na.rm=TRUE),
-      min_ess = min(summ$ess_bulk, na.rm=TRUE)
-    ),
-    coverage = list(
-      mu = coverage_mu,
-      theta = coverage_theta
-    ),
-    samples = list(
-      mu = fit$draws("mu", format = "matrix"),
-      theta_new = fit$draws("theta_new", format = "matrix"),
-      theta_100 = fit$draws("theta_100", format = "matrix")
-    ),
-    probs = c(
-      mu_gt_0 = mean(mu_samples > 0),
-      theta_new_gt_0 = mean(theta_new_samples > 0)
-    )
-  )
-}
-
-# Aggregate results
-summarize_results <- function(results) {
-  coverage_mu <- mean(sapply(results, function(x) x$coverage$mu))
-  coverage_theta <- mean(sapply(results, function(x) x$coverage$theta))
-  prob_data <- lapply(results, function(x) {
-    mu_prob <- x$probs[1]  # mu_gt_0
-    theta_prob <- x$probs[2]  # theta_new_gt_0
-    c(mu_prob, theta_prob, mu_prob - theta_prob)
-  })
-  prob_comparisons <- do.call(rbind, prob_data)
-  colnames(prob_comparisons) <- c("mu", "theta", "diff")
-  
-  list(
-    coverage = list(mu = coverage_mu, theta = coverage_theta),
-    prob_summary = list(
-      mean_diff = mean(prob_comparisons[,"diff"]),
-      sd_diff = sd(prob_comparisons[,"diff"]),
-      range_diff = range(prob_comparisons[,"diff"])
-    ),
-    prob_distributions = prob_comparisons
-    )
-}
-```
-
-## Run simulation
+## Experiment 1: variance
 
 ```{r}
-#| eval: false
-
-# experiment one
-source("functions.r")
-library(dplyr)
-library(cmdstanr)
-
-model <- cmdstan_model("model.stan")
-n_sims <- 20
-
-results_low <- lapply(1:n_sims, function(x) run_single_sim(seed = x, true_tau = 0.35))
-results_mod <- lapply(1:n_sims, function(x) run_single_sim(seed = x, true_tau = 0.7))
-results_high <-  lapply(1:n_sims, function(x) run_single_sim(seed = x, true_tau = 1.4))
-
-probs_df <- rbind(
-  cbind(do.call(rbind, lapply(results_low, function(x) x$probs)), condition="low"),
-  cbind(do.call(rbind, lapply(results_mod, function(x) x$probs)), condition="moderate"), 
-  cbind(do.call(rbind, lapply(results_high, function(x) x$probs)), condition="high")
-) %>% as.data.frame()
-
-probs_df$condition <- factor(probs_df$condition, 
-                             levels = c("low", "moderate", "high"))
-
-saveRDS(probs_df, "experiment_one.RDS")
-```
-
-```{r}
-#| fig-width: 8
-#| fig-height: 6
-probs_df <- readRDS(here("experiment_one.RDS"))
-colors <- viridis::viridis(3)[c(1,2,3)] 
+#| echo: false
+#| fig-width: 6
+#| fig-height: 4
+probs_df <- readRDS(here::here("experiment_one/probs.RDS"))
+colors <- c("#E69F00", "#56B4E9", "#009E73", 
+                "#F0E442", "#0072B2", "#D55E00", 
+                "#CC79A7", "#000000")
 par(mar = c(4, 4, 3, 2))
 plot(probs_df$mu_gt_0, probs_df$theta_new_gt_0,
      xlab = expression(P(mu > 0)), 
@@ -250,7 +183,7 @@ plot(probs_df$mu_gt_0, probs_df$theta_new_gt_0,
      main = "Average effect size vs. predicted effect size",
      col = colors[probs_df$condition],  
      pch = 19,
-     cex = 0.5)
+     cex = 0.75)
 abline(0, 1, lty = 2)
 abline(v = .975, lty = 3)
 abline(h = .975, lty = 3)
@@ -258,5 +191,133 @@ legend("bottomright",
        legend = c("Low τ", "Moderate τ", "High τ"),
        col = colors,  
        pch = 19)
+
+```
+
+```{r}
+#| echo: false
+results_low <- readRDS(here::here("experiment_one/results_low.RDS"))
+mu_intervals <- lapply(results_low, function(x) {
+  mu_samples <- x$samples$mu
+  c(mean = mean(mu_samples),
+    lower = quantile(mu_samples, 0.025),
+    upper = quantile(mu_samples, 0.975))
+}) %>%
+  do.call(rbind, .) %>%
+  as.data.frame() 
+
+
+plot(NA, NA, 
+     ylim = c(-1,1.75),
+     xlim = c(0, nrow(mu_intervals)),
+     xaxt = "n",
+     ylab = "Effect Size",
+     xlab = "Simulation",
+     main = "μ posterior intervals, low tau")
+# label first, middle and last simulation
+axis(1, at=c(1, floor(nrow(mu_intervals)/2), nrow(mu_intervals)), 
+     labels=c(1, floor(nrow(mu_intervals)/2), nrow(mu_intervals)))
+
+
+abline(h = 0.7, lty = 2, col = "red")
+abline(h = 0, lty = 2, col = "gray")
+
+for(i in 1:nrow(mu_intervals)) {
+  segments(i, mu_intervals$lower[i], i, mu_intervals$upper[i])
+  points(i, mu_intervals$mean[i], pch = 20, cex = 1)
+}
+
+legend("bottomleft", 
+       legend = c("Truth","Significance"),
+       col = c("red","grey"),
+       lty = 2,
+       pt.cex = 0.7,
+       bty = "n") 
+```
+
+## Experiment 2: trials
+
+```{r}
+#| echo: false
+#| fig-width: 6
+#| fig-height: 4
+probs_df <- readRDS(here::here("experiment_two.RDS"))
+colors <- c("#E69F00", "#56B4E9", "#009E73", 
+            "#F0E442", "#0072B2", "#D55E00", 
+            "#CC79A7", "#000000")
+par(mar = c(4, 4, 3, 2))
+plot(probs_df$mu_gt_0, probs_df$theta_new_gt_0,
+     xlab = expression(P(mu > 0)), 
+     ylab = expression(P(theta[new] > 0)),
+     main = "Average effect size vs. predicted effect size",
+     col = colors[probs_df$condition],  
+     pch = 19,
+     cex = 0.75)
+abline(0, 1, lty = 2)
+abline(v = .975, lty = 3)
+abline(h = .975, lty = 3)
+legend("bottomright", 
+       legend = c("Low n", "Moderate n", "High n"),
+       col = colors,  
+       pch = 19)
+
+```
+
+## Experiment 3: forward simulation
+
+```{r}
+#| echo: false
+#| fig-width: 6
+#| fig-height: 4
+simulate_raw_data <- function(n_sims = 100, n_trials = 10, 
+                              mu = 0.7, tau_values = c(0.35, 0.7, 1.4)) {
+  
+  results <- map_df(tau_values, function(tau) {
+    map_df(1:n_sims, function(sim) {
+      theta <- rnorm(n_trials, mu, tau)
+      tibble(
+        tau = tau,
+        sim = sim,
+        theta = theta,
+        mean_theta = mean(theta),
+        prop_pos = mean(theta > 0),
+        sd_theta = sd(theta)
+      )
+    })
+  })
+  
+  results$tau <- factor(results$tau, 
+                        levels = c(0.35, 0.7, 1.4),
+                        labels = c("Low τ", "Moderate τ", "High τ"))
+  return(results)
+}
+
+set.seed(123)
+raw_results <- simulate_raw_data()
+
+ggplot(raw_results, aes(x = tau, y = theta, color = tau)) +
+  geom_point(alpha = 0.5, position = "jitter") +
+  labs(x = NULL,
+       y = "theta",
+       color = "Between-study\nvariation",
+       title = "Direct simulation of study effects",
+       subtitle = "100 simulations of ten trials") +
+  theme_minimal() +
+  ggokabeito::scale_color_okabe_ito()
+
+df <- raw_results %>% 
+  group_by(tau, sim) %>% 
+  summarise(mean_theta = mean(theta),
+            sd_theta = sd(theta))
+
+ggplot(df, aes(x = tau, y = mean_theta/sd_theta, color = tau)) +
+  geom_point(alpha = 0.5, position = "jitter") +
+  labs(x = NULL,
+       y = "z-value",
+       color = "Between-study\nvariation",
+       title = "Direct simulation of study effects",
+       subtitle = "100 z-values") +
+  theme_minimal() +
+  ggokabeito::scale_color_okabe_ito()
 
 ```
